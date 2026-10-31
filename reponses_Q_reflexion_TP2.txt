@@ -1,0 +1,37 @@
+TP 2 : Réponses aux questions de réflexion
+
+
+Q1 : La clé de la racine doit rester hors ligne car c'est elle qui donne confiance à toute l'infrastructure, et personne n'est au-dessus d'elle pour la révoquer.
+Si elle est volée, l'attaquant peut créer de faux certificats que tous les clients accepteront. On la garde donc sur une machine non connectée et on ne l'utilise que pour signer l'intermédiaire et publier sa CRL.
+Si l'intermédiaire est compromis, la racine révoque son certificat et publie une nouvelle CRL. On crée ensuite un nouvel intermédiaire avec une nouvelle clé, on refait tous les certificats serveur et client qu'il avait signés, et on cherche quels faux certificats ont pu être créés.
+Si la racine est compromise, il faut tout reconstruire : nouvelle racine, nouvel intermédiaire, nouveaux certificats. Il faut aussi retirer l'ancienne racine de tous les clients qui lui faisaient confiance, ce qui est long et difficile.
+
+Q2 : pathlen:0 interdit qu'une autre AC existe sous l'intermédiaire. Il ne peut signer que des certificats finaux.
+Si on l'oublie, une erreur de configuration pourrait donner à quelqu'un un certificat avec CA:TRUE. Cette personne deviendrait une AC et pourrait signer des certificats à son tour, sans aucun contrôle.
+
+Q3 : La clé privée doit être connue de son propriétaire seulement.
+Si l'AC générait la clé du serveur, elle devrait la lui envoyer et la clé pourrait être interceptée. L'AC en garderait aussi une copie et pourrait se faire passer pour le serveur. Enfin, le serveur pourrait dire que ce n'est pas lui qui a signé, puisque quelqu'un d'autre a la clé.
+Avec une CSR, l'AC ne reçoit que la clé publique. Elle signe le certificat sans jamais voir la clé privée.
+
+Q4 : Les clients modernes vérifient le SAN. Quand un SAN est présent, ils ignorent le CN, et la plupart refusent un certificat qui n'a pas de SAN.
+Le CN est un ancien champ qui ne peut contenir qu'un seul nom, sans dire si c'est un nom de domaine, une adresse IP ou autre chose. Le SAN peut contenir plusieurs noms et indique leur type (DNS, email). On garde le CN par habitude, mais c'est le SAN qui compte.
+
+Q5 : Les CRL ont plusieurs limites.
+La liste grossit à chaque révocation.
+Elle n'est publiée que de temps en temps, ici tous les 7 jours au plus. Entre deux publications, un certificat révoqué peut encore être accepté.
+Si le client n'arrive pas à télécharger la CRL, il doit choisir entre refuser la connexion ou l'accepter quand même. Beaucoup de logiciels l'acceptent, et la protection ne sert alors à rien.
+Si la CRL expire sans être remplacée, tous les certificats sont refusés.
+Avec OCSP, le client demande l'état d'un seul certificat à un serveur. La réponse est plus petite et plus à jour. Mais il faut faire une requête à chaque connexion, ce qui ralentit, et le serveur OCSP sait quels sites l'utilisateur visite. Avec l'OCSP stapling, c'est le serveur web qui joint lui-même une réponse récente, et le client n'a plus besoin de contacter le serveur OCSP.
+Avec des certificats de très courte durée (quelques jours), on ne révoque plus : on attend qu'ils expirent. Une clé volée n'est utilisable que quelques jours. En échange, le renouvellement doit être entièrement automatique.
+
+Q6 : Politique de certification minimale :
+1. L'infrastructure ne certifie que des serveurs en tp.local et des personnes ayant une adresse @tp.local.
+2. La clé de la racine est sur une machine hors ligne et ne sert qu'à signer l'intermédiaire et ses CRL, toujours en présence de deux administrateurs.
+3. La clé de l'intermédiaire est sur une machine dédiée, accessible seulement aux administrateurs. Son certificat est valable 5 ans.
+4. Un certificat de serveur est demandé par un administrateur système. Un certificat personnel est demandé par la personne elle-même.
+5. Pour un serveur, le responsable du domaine confirme la demande. Pour une personne, elle présente sa carte d'étudiant ou d'agent.
+6. Le demandeur génère lui-même sa clé et envoie une CSR. L'AC ne génère et ne garde jamais de clé privée.
+7. Chaque certificat contient un SAN, CA:FALSE et un seul usage (serveur ou client).
+8. Les certificats sont valables 90 jours et sont renouvelés automatiquement 30 jours avant la fin.
+9. En cas de perte ou de vol de clé, la révocation est demandée dans les 24 heures. La CRL est publiée dans les 24 heures, et au moins une fois par semaine.
+10. La base index.txt et les journaux de l'AC sont conservés 3 ans et relus tous les trois mois.
