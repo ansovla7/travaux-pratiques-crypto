@@ -1,0 +1,16 @@
+Q1 : Le sel peut être stocké en clair car il n'est pas un secret. 
+Il doit être différent pour chaque fichier afin de permettre que deux fichiers protégés par le même mot de passe aient des clés différentes
+
+Q2 : Un nonce aléatoire suffit ici car on ne doit pas utiliser deux fois le même nonce pour une même clé, et comme la clé change, alors il n'y a aucun risque
+
+Q3 : Le contenu du fichier chiffré ne depend pas du nom du fichier. 
+Par exemple, pour alice qui a deux fichiers chiffrés avec le même mot de passe, salaires.xlsx et bilan_public.xlsx, un attaquant qui peut avoir accès a ses fichiers, peut échanger leur contenu. 
+Alice, après déchiffrement de bilan_public, enverra le contenu de salaires.xlsx à quelqu'un d'autre sans s'en rendre compte.
+
+Q4 : L'en-tête a été modifié parce que le programme lit t, m et p dans l’en-tête et les
+utilise pour calculer la clé. 
+Si l’en-tête n’était pas protégé, un attaquant pourrait le modifier et vu que l’en-tête fait partie des données associées, toute modification fait échouer le déchiffrement.
+
+Q5 :  Si le programme affiche la raison précise d'un échec il donne une information à
+l’attaquant. En modifiant le fichier petit à petit et en lisant le message, l’attaquant apprend des
+choses qu’il ne devrait pas savoir. 
