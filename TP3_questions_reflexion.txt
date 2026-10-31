@@ -1,0 +1,30 @@
+TP 3 : Déployer un canal sécurisé et gérer les certificats
+Réponses aux questions de réflexion
+
+
+Q1 : Le serveur ne doit pas envoyer le certificat racine car le client l'a déjà sur sa machine. Il lui fait confiance parce qu'il l'a installé lui-même.
+Une racine reçue par le réseau ne vaut rien, car un attaquant pourrait envoyer n'importe quelle racine. Le client ne s'en sert donc pas, et l'envoyer ne fait qu'alourdir chaque connexion.
+
+Q2 : Un ticket de session permet à un client de reprendre une connexion sans refaire toute la poignée de main. Il contient les secrets de la session, chiffrés avec une clé du serveur.
+nginx garde cette clé tant qu'il n'est pas redémarré. Si quelqu'un la vole, il peut déchiffrer toutes les sessions qu'il a enregistrées pendant cette période. On perd alors l'avantage d'ECDHE, qui protège normalement les anciennes sessions.
+Sans tickets, chaque session a sa propre clé, qui disparaît à la fin de la session.
+
+Q3 : L'en-tête HSTS dit au navigateur de contacter le site uniquement en HTTPS pendant un an. Le navigateur passe alors tout seul de http à https, et l'utilisateur ne peut plus ignorer une erreur de certificat.
+Il protège contre l'attaque suivante : sur un Wi-Fi public, un attaquant intercepte la première requête, qui part en HTTP, et garde la victime en HTTP pendant que lui parle au vrai site en HTTPS. La victime ne voit rien et l'attaquant lit tout.
+La toute première visite n'est pas protégée, car le navigateur n'a pas encore reçu l'en-tête.
+
+Q4 : Avec des certificats de 47 jours, il faut renouveler chaque certificat 8 à 10 fois par an, au lieu d'une fois.
+Pour une organisation qui le fait à la main, cela fait beaucoup plus de travail et beaucoup plus de risques d'oubli. Un oubli, c'est un site inaccessible le jour où le certificat expire. Il faut aussi savoir exactement quels certificats existent et sur quels serveurs.
+Il faut donc automatiser le renouvellement, comme avec renouveler.sh, et surveiller les dates, comme avec surveiller.py. L'avantage est qu'une clé volée cesse d'être utilisable beaucoup plus vite.
+
+Q5 : Si le serveur n'envoie pas l'intermédiaire, le client doit le trouver lui-même.
+Certains navigateurs y arrivent : ils l'ont gardé en mémoire après la visite d'un autre site, ou le téléchargent à l'adresse indiquée dans le certificat. D'autres clients, comme curl, Python ou les applications mobiles, ne le font pas et refusent la connexion.
+C'est pour cela que le site semble marcher dans un navigateur mais pas ailleurs. On l'a vu avec Bob : sans l'intermédiaire, son certificat est refusé. Il faut donc toujours envoyer le certificat suivi de l'intermédiaire.
+
+Q6 : Si la clé privée du serveur a fuité, on suit ces étapes :
+1. Trouver par où la clé est sortie (accès non autorisé, sauvegarde mal protégée, dépôt Git) et fermer cet accès.
+2. Générer une nouvelle clé, obtenir un nouveau certificat, l'installer et recharger nginx, par exemple avec renouveler.sh --force.
+3. Révoquer l'ancien certificat avec la raison keyCompromise, puis publier et installer la nouvelle CRL.
+4. Supprimer toutes les copies de l'ancienne clé et changer les autres secrets qui ont pu fuiter en même temps.
+5. Chercher depuis quand la clé était exposée. Grâce à ECDHE, les anciennes sessions restent protégées. Mais pendant cette période, l'attaquant a pu se faire passer pour le serveur, il faut donc lire les journaux.
+6. Prévenir les personnes concernées et corriger ce qui a permis la fuite.

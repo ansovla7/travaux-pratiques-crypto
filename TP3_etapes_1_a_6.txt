@@ -1,0 +1,163 @@
+TP 3 : Déployer un canal sécurisé et gérer les certificats
+Réponses aux étapes 1 à 6
+
+
+ÉTAPE 1 : Préparer les fichiers
+
+Le serveur envoie son certificat suivi de l'intermédiaire. L'ordre compte : chaque certificat est signé par celui qui le suit.
+Il n'envoie pas la racine, car le client l'a déjà et c'est elle qui lui sert de point de confiance.
+
+Il faut créer le dossier /etc/nginx/tls avant les commandes install, sinon elles échouent :
+sudo mkdir -p /etc/nginx/tls
+
+La clé privée est installée avec les droits 600 : seul root peut la lire. nginx la lit au démarrage avant de passer sur un compte sans privilèges.
+Les certificats et la CRL sont publics, ils sont installés avec les droits 644.
+
+Sur Ubuntu ou Debian, le site par défaut de nginx peut gêner (il écoute aussi le port 80 en IPv6). On le désactive :
+sudo rm /etc/nginx/sites-enabled/default
+La configuration du TP est placée dans /etc/nginx/conf.d/tp.conf.
+
+
+ÉTAPE 2 : Rôle de chaque directive nginx
+
+listen 443 ssl
+nginx écoute sur le port 443, le port du HTTPS, et active TLS sur ce port.
+
+server_name www.tp.local
+Ce bloc répond aux demandes pour www.tp.local. Ce nom doit être dans le SAN du certificat du serveur.
+
+ssl_certificate /etc/nginx/tls/serveur_chaine.crt
+Le certificat du serveur suivi de l'intermédiaire. Le client reçoit ainsi tout ce qu'il faut pour remonter jusqu'à la racine.
+
+ssl_certificate_key /etc/nginx/tls/serveur.key
+La clé privée du serveur. Elle lui permet de prouver qu'il est bien le propriétaire du certificat.
+
+ssl_protocols TLSv1.2 TLSv1.3
+Seules les versions 1.2 et 1.3 de TLS sont acceptées. Les versions plus anciennes (SSLv3, TLS 1.0 et 1.1) ont des faiblesses connues et ne sont plus autorisées.
+
+ssl_prefer_server_ciphers off
+Le client choisit la suite de chiffrement. Toutes les suites acceptées sont sûres, on laisse donc le client prendre celle qui est la plus rapide pour lui.
+
+ssl_session_tickets off
+Désactive les tickets de session. nginx ne change jamais la clé qui protège les tickets. Si cette clé était volée, on pourrait déchiffrer les anciennes sessions.
+
+ssl_client_certificate /etc/nginx/tls/racine.crt
+La racine qui sert à vérifier les certificats des clients. Seuls les clients dont le certificat remonte à cette racine sont acceptés.
+
+ssl_verify_client on
+Le certificat client est obligatoire. Un client sans certificat valide est refusé.
+
+ssl_verify_depth 2
+La chaîne du client ne peut pas être plus longue que client, intermédiaire, racine.
+
+ssl_crl /etc/nginx/tls/crls.pem
+Les listes de révocation de l'intermédiaire et de la racine. Un client dont le certificat est révoqué est refusé. Il faut republier cette liste avant qu'elle expire (7 jours pour l'intermédiaire) et recharger nginx, sinon tous les clients sont refusés.
+
+add_header Strict-Transport-Security "max-age=31536000" always
+Demande au navigateur d'utiliser uniquement HTTPS pour ce site pendant un an. always ajoute l'en-tête même sur les pages d'erreur.
+
+return 200 "Bonjour $ssl_client_s_dn\n"
+Le serveur répond en affichant le nom du client qu'il a vérifié. Cela montre que le serveur sait qui est connecté.
+
+Deux directives ajoutées à la configuration de l'énoncé :
+
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305
+Limite les suites acceptées en TLS 1.2 à celles qui ont un échange de clés éphémère (ECDHE) et un chiffrement authentifié (GCM ou ChaCha20-Poly1305). Sans cette ligne, nginx accepte aussi des suites CBC, qui n'ont pas de chiffrement authentifié (voir étape 4).
+
+error_log /var/log/nginx/tp.log info
+Écrit dans un journal la raison exacte quand un certificat client est refusé. C'est utile pour comprendre les erreurs pendant le TP.
+
+Test de la syntaxe puis rechargement :
+sudo nginx -t
+sudo systemctl reload nginx
+
+
+ÉTAPE 3 : Observer la poignée de main
+
+On crée d'abord le certificat de Bob, car celui d'Alice a été révoqué au TP 2. Le script pki.sh du TP 2 le crée déjà.
+
+Avec le certificat de Bob, openssl s_client donne :
+Version de TLS : TLSv1.3
+Suite de chiffrement : TLS_AES_256_GCM_SHA384
+Groupe d'échange de clés : X25519
+Vérification : OK, et le nom vérifié est www.tp.local
+Le serveur répond : Bonjour CN=bob@tp.local
+
+Sans certificat client, le serveur répond par l'erreur 400 No required SSL certificate was sent. C'est l'effet de ssl_verify_client on.
+
+Avec le certificat d'Alice, le serveur répond par l'erreur 400 The SSL certificate error. Le journal tp.log indique certificate revoked : le numéro de série d'Alice est dans la CRL que nginx consulte.
+
+nginx termine la poignée de main puis renvoie une erreur 400 au lieu de couper la connexion. Le résultat est le même : le client n'a pas accès au site.
+
+La commande curl de l'énoncé échoue avec l'erreur 400, car curl n'envoie que le certificat de Bob, sans l'intermédiaire. nginx ne connaît que la racine et ne peut donc pas vérifier le certificat. Le journal indique unable to verify the first certificate. Il faut donner à curl le certificat de Bob suivi de l'intermédiaire :
+cat bob.crt inter/inter.crt > bob_chaine.crt
+curl --cacert racine/racine.crt --cert bob_chaine.crt --key bob.key https://www.tp.local/
+Le serveur répond alors Bonjour CN=bob@tp.local.
+
+Avec Wireshark, on capture sur l'interface lo avec le filtre tcp.port == 443.
+Le ClientHello contient les versions de TLS acceptées par le client, ses suites de chiffrement, ses groupes d'échange de clés, sa part de clé Diffie Hellman et le nom du site demandé (www.tp.local).
+Le ServerHello contient la version et la suite choisies par le serveur, et sa part de clé.
+Ensuite, on ne voit plus que des messages Application Data.
+
+En TLS 1.3, le certificat du serveur n'est pas visible parce qu'il est envoyé chiffré. Dès le ServerHello, le client et le serveur ont chacun une part de clé et calculent un secret commun. Tous les messages suivants, dont le certificat, sont chiffrés avec ce secret. En TLS 1.2, le certificat passait en clair.
+
+
+ÉTAPE 4 : Vérifier la configuration
+
+La commande openssl s_client -tls1_1 de l'énoncé affiche no protocols available. Ce n'est pas le serveur qui refuse : c'est le client OpenSSL 3, qui n'autorise plus TLS 1.1 et n'envoie donc rien. Pour vraiment tester le serveur, on autorise TLS 1.1 côté client :
+openssl s_client -connect www.tp.local:443 -tls1_1 -cipher 'DEFAULT@SECLEVEL=0' -brief
+Le serveur répond alors par l'alerte protocol version. TLS 1.1 est bien refusé par le serveur.
+
+Avec la configuration de l'énoncé, nmap montre 15 suites en TLS 1.2. Elles utilisent toutes ECDHE, donc l'échange de clés est éphémère. Mais 6 d'entre elles sont en mode CBC, sans chiffrement authentifié (par exemple TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA).
+On corrige en ajoutant la directive ssl_ciphers (voir étape 2). Après correction, nmap ne montre plus que 3 suites en TLS 1.2 (AES 128 GCM, AES 256 GCM et ChaCha20 Poly1305) et 3 en TLS 1.3, toutes notées A.
+
+
+ÉTAPE 5 : Superviser les expirations
+
+Le script surveiller.py lit tous les fichiers .crt, .pem et .cer d'un dossier. Pour chaque certificat, il calcule le nombre de jours restants et affiche OK, ALERTE (moins de 30 jours) ou CRITIQUE (moins de 7 jours). Le code de sortie est le niveau le plus grave trouvé : 0 pour OK, 1 pour ALERTE, 2 pour CRITIQUE.
+
+Test avec un certificat valable 5 jours :
+openssl ca -batch -config inter.cnf -extensions ext_serveur -days 5 -in court.csr -out court.crt
+python3 surveiller.py dossier
+Résultat : court.crt est CRITIQUE avec 5 jours restants, les autres sont OK, et le code de sortie vaut 2.
+Sans le certificat court, le code de sortie vaut 0.
+
+
+ÉTAPE 6 : Automatiser le renouvellement
+
+Le script renouveler.sh fait les cinq choses demandées :
+1. il génère une nouvelle clé et une nouvelle demande ;
+2. il fait signer la demande par l'intermédiaire ;
+3. il vérifie la chaîne avec openssl verify et vérifie que la clé correspond au certificat, avant de toucher au serveur ;
+4. il installe les nouveaux fichiers, teste la configuration avec nginx -t et recharge nginx sans couper les connexions en cours ;
+5. il garde l'ancienne clé et l'ancien certificat dans /etc/nginx/tls/archive, et les remet en place si le test de configuration échoue.
+
+Le script ne renouvelle que si le certificat expire dans moins de 30 jours. Il le vérifie avec openssl x509 -checkend. L'option --force permet de renouveler tout de suite pour tester.
+
+Test :
+./renouveler.sh affiche Certificat valable plus de 30 jours : rien a faire.
+./renouveler.sh --force renouvelle le certificat. Le site continue de répondre Bonjour CN=bob@tp.local, avec un nouveau numéro de série.
+
+Ce test ne marche qu'avec unique_subject = no dans inter.cnf. Sans cette ligne, OpenSSL refuse de signer un nouveau certificat pour www.tp.local tant que l'ancien est valide.
+
+Planification avec un minuteur systemd. On crée deux fichiers.
+
+/etc/systemd/system/renouveler-tls.service :
+[Service]
+Type=oneshot
+ExecStart=/home/etudiant/tp2/renouveler.sh
+
+/etc/systemd/system/renouveler-tls.timer :
+[Timer]
+OnCalendar=daily
+Persistent=true
+[Install]
+WantedBy=timers.target
+
+Puis on active le minuteur :
+sudo systemctl enable --now renouveler-tls.timer
+
+On peut aussi utiliser cron, avec cette ligne qui lance le script tous les jours à 3 h 17 :
+17 3 * * * /home/etudiant/tp2/renouveler.sh
+
+Le script est lancé tous les jours, mais il ne renouvelle le certificat que s'il expire dans moins de 30 jours.
