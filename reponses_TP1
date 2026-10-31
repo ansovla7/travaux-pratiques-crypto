@@ -1,1 +1,0 @@
-Q2 : Un nonce aléatoire suffit ici car on ne doit pas utiliser deux fois le même nonce pour une même clé, et comme la clé change, alors il n'y a aucun risque
